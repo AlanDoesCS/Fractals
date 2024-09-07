@@ -1,2 +1,2 @@
 # Fractals
-Some fun fractal renderers in Java
+Some fun fractal renderers in Go
