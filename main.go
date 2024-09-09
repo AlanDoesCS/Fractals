@@ -13,8 +13,31 @@ import (
 	"golang.org/x/image/font/basicfont"
 )
 
+const (
+	FractalMandelbrot = iota
+	FractalJulia
+	// (wip) adding more fractals
+)
+
 func mandelbrot(cx, cy float64, maxIter int) float64 {
 	x, y := 0.0, 0.0
+	iteration := 0
+
+	for x*x+y*y <= 4 && iteration < maxIter {
+		xTemp := x*x - y*y + cx
+		y = 2*x*y + cy
+		x = xTemp
+		iteration++
+	}
+
+	if iteration < maxIter {
+		logZn := math.Log(x*x+y*y) / 2
+		return float64(iteration) + 1 - math.Log(logZn)/math.Log(2)
+	}
+	return float64(maxIter)
+}
+
+func julia(x, y, cx, cy float64, maxIter int) float64 {
 	iteration := 0
 
 	for x*x+y*y <= 4 && iteration < maxIter {
@@ -51,20 +74,22 @@ var colorMapping = []color.RGBA{
 	{106, 52, 3, 255},
 }
 
+type Game struct {
+	minX, maxX, minY, maxY float64
+	centerX, centerY       float64
+	juliaX, juliaY         float64
+	zoom                   float64
+	zoomSpeed              float64
+	fractalType            int
+	lastUpdate             time.Time
+}
+
 func getColor(iterations, maxIter int) color.RGBA {
 	if iterations < maxIter && iterations > 0 {
 		i := iterations % len(colorMapping)
 		return colorMapping[i]
 	}
 	return color.RGBA{}
-}
-
-type Game struct {
-	minX, maxX, minY, maxY float64
-	centerX, centerY       float64
-	zoom                   float64
-	zoomSpeed              float64
-	lastUpdate             time.Time
 }
 
 func (g *Game) Update() error {
@@ -77,7 +102,9 @@ func (g *Game) Update() error {
 		x, y := ebiten.CursorPosition()
 		if x < 100 {
 			if y >= 70 && y <= 270 {
-				g.zoomSpeed = (float64(y-70) / 200) * 0.5 // Max speed of 0.5
+				g.zoomSpeed = (float64(y-70) / 200) * 0.5
+			} else if y >= 300 && y <= 340 {
+				g.toggleFractal()
 			}
 		}
 	}
@@ -88,8 +115,16 @@ func (g *Game) Update() error {
 	return nil
 }
 
+func (g *Game) toggleFractal() {
+	g.fractalType = (g.fractalType + 1) % 2
+	if g.fractalType == FractalJulia {
+		g.juliaX = g.centerX
+		g.juliaY = g.centerY
+	}
+}
+
 func (g *Game) Draw(screen *ebiten.Image) {
-	maxIter := 100
+	maxIter := 200
 
 	width := (g.maxX - g.minX) / g.zoom
 	height := (g.maxY - g.minY) / g.zoom
@@ -98,13 +133,19 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	minY := g.centerY - height/2
 	maxY := g.centerY + height/2
 
-	// calc mandelbrot set for each pixel
+	// calc fractal set for each pixel
 	for y := 0; y < screen.Bounds().Dy(); y++ {
 		for x := 0; x < screen.Bounds().Dx(); x++ {
 			cx := minX + (maxX-minX)*float64(x)/float64(screen.Bounds().Dx())
 			cy := minY + (maxY-minY)*float64(y)/float64(screen.Bounds().Dy())
 
-			iterations := mandelbrot(cx, cy, maxIter)
+			var iterations float64
+			switch g.fractalType {
+			case FractalMandelbrot:
+				iterations = mandelbrot(cx, cy, maxIter)
+			case FractalJulia:
+				iterations = julia(cx, cy, g.juliaX, g.juliaY, maxIter)
+			}
 			clr := getColor(int(iterations), maxIter)
 
 			vector.DrawFilledRect(screen, float32(x), float32(y), 1, 1, clr, false)
@@ -112,7 +153,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 
 	drawSidebar(screen, g)
-	drawInfo(screen, g.zoomSpeed, g.zoom, g.centerX, g.centerY)
+	drawInfo(screen, g.zoomSpeed, g.zoom, g.centerX, g.centerY, g.fractalType)
 }
 
 func drawSidebar(screen *ebiten.Image, g *Game) {
@@ -129,12 +170,21 @@ func drawSidebar(screen *ebiten.Image, g *Game) {
 
 	vector.DrawFilledRect(screen, float32(zoomSpeedX), float32(zoomSpeedY), 10, float32(zoomSpeedHeight), color.RGBA{200, 200, 200, 255}, false)
 
-	// Draw the current zoom speed as a filled rectangle
+	// zoom speed
 	currentZoomSpeedY := zoomSpeedY + int((g.zoomSpeed/0.5)*float64(zoomSpeedHeight))
 	vector.DrawFilledRect(screen, float32(zoomSpeedX), float32(currentZoomSpeedY-5), 10, 10, color.RGBA{255, 0, 0, 255}, false)
+
+	// switch between fractals
+	buttonText := "Toggle Fractal"
+	buttonWidth := 80
+	buttonHeight := 40
+	buttonX := 10
+	buttonY := 300
+	vector.DrawFilledRect(screen, float32(buttonX), float32(buttonY), float32(buttonWidth), float32(buttonHeight), color.RGBA{100, 100, 100, 255}, false)
+	text.Draw(screen, buttonText, basicfont.Face7x13, buttonX+5, buttonY+25, color.White)
 }
 
-func drawInfo(screen *ebiten.Image, zoomSpeed, zoomLevel, centerX, centerY float64) {
+func drawInfo(screen *ebiten.Image, zoomSpeed, zoomLevel, centerX, centerY float64, fractalType int) {
 	myFont := basicfont.Face7x13
 
 	speedContent := fmt.Sprintf("Zoom Speed: %.3f", zoomSpeed)
@@ -145,6 +195,18 @@ func drawInfo(screen *ebiten.Image, zoomSpeed, zoomLevel, centerX, centerY float
 
 	centerContent := fmt.Sprintf("Center: (%.6f, %.6f)", centerX, centerY)
 	text.Draw(screen, centerContent, myFont, 10, 60, color.White)
+
+	fractalName := "Fractal"
+	switch fractalType {
+	case FractalMandelbrot:
+		fractalName = "Mandelbrot"
+	case FractalJulia:
+		fractalName = "Julia"
+	default:
+		fractalName = "Unknown"
+	}
+
+	text.Draw(screen, fmt.Sprintf("Fractal: %s", fractalName), myFont, 10, 360, color.White)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
@@ -160,15 +222,17 @@ func main() {
 		/* Center on Seahorse Valley
 		http://www.mrob.com/pub/muency/seahorsevalley.html
 		*/
-		centerX:    -0.7445398603559083806,
-		centerY:    0.1217237738944248242,
+		centerX:    0.42884,
+		centerY:    -0.231345,
+		juliaX:     0.0,
+		juliaY:     0.0,
 		zoom:       0.0,  // Initial zoom level
 		zoomSpeed:  0.01, // Initial zoom speed
 		lastUpdate: time.Now(),
 	}
 
 	ebiten.SetWindowSize(640, 480)
-	ebiten.SetWindowTitle("Mandelbrot Set")
+	ebiten.SetWindowTitle("Fractals")
 
 	if err := ebiten.RunGame(game); err != nil {
 		log.Fatal(err)
